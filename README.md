@@ -1,10 +1,10 @@
 # Linear dataset price estimation
 
-A working pipeline that measures a company's Linear workspace and turns it into a priced dataset estimate, without a human ever reading the data and without an API key ever travelling by email. Built as a case study for Ooak Data.
+A working pipeline that measures a company's Linear workspace and turns it into a priced dataset estimate, without a human ever reading the data and without an API key ever travelling by email.
 
 ## How it works
 
-The founder receives a link and opens an intake page hosted on Render. They create a read-only Linear API key and paste it into the page. The Flask application uses that key to query the Linear GraphQL API, paginating through every ticket including archived ones, and computes aggregate metrics in memory. It then posts those aggregates to an n8n webhook, which appends a single row to a Google Sheet. The founder sees a confirmation and is told to revoke the key.
+The founder receives a link and opens an intake page hosted on Render. They create a read-only Linear API key and paste it into the page. The application uses that key to query the Linear PI, paginating through every ticket including archived ones, and computes aggregate metrics in memory. It then posts those aggregates to an n8n webhook, which appends a single row to a Google Sheet. The founder sees a confirmation and is told to revoke the key.
 
 The API key lives in the Flask process memory for the duration of the scan and goes no further. It never reaches n8n, the Sheet, or any log. Only the seventeen aggregate metrics leave the application.
 
@@ -12,17 +12,17 @@ Pricing formulas sit in the Sheet rather than in the code, because the coefficie
 
 ## What is measured
 
-Volume comes first: teams, projects, tickets, comments. It is the weakest signal on its own.
+Volume comes first: teams, projects, tickets, comments. 
 
-Months active matters because an eighteen-month workspace beats the same volume crammed into two months. Long trajectories make realistic tasks.
+Months active matters because an eighteen-month workspace beats the same volume produced into two months. Long trajectories make realistic tasks.
 
-Conversational density is captured by the share of tickets carrying at least one comment and the median number of comments per ticket. A ticket with no thread has no context to reconstruct, and small teams tend to talk in Slack rather than in Linear.
+Conversational density is captured by the share of tickets with at least one comment. A ticket with no thread has no context to reconstruct, and small teams tend to talk in Slack rather than in Linear.
 
 The share of resolved tickets matters because an agent must reproduce a sequence. Without state movement there is nothing to learn.
 
 The share of tickets mentioning another tool is the differentiating metric. It directly measures how many cross-tool tasks are derivable from the workspace.
 
-Text volume, in characters and estimated tokens, is the cost side of the equation: it approximates the anonymisation workload.
+Text volume in characters is also part of the estimation. 
 
 Golden tickets are the synthesis and the figure that actually gets priced. A ticket qualifies when it has a description longer than two hundred characters, at least three comments, at least two distinct participants, and a resolved status reached through at least two state transitions.
 
