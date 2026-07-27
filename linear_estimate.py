@@ -36,6 +36,7 @@ import sys
 import json
 import time
 import statistics
+from collections import Counter
 from datetime import datetime, timezone
 
 import requests
@@ -164,6 +165,7 @@ def run_scan(api_key):
         raise RuntimeError("Workspace vide ou clé sans accès.")
 
     comment_counts, dates = [], []
+    actors = set()
     n_comments = n_with = n_solved = n_tool = n_golden = n_default = chars = 0
 
     for p in projects:
@@ -189,6 +191,12 @@ def run_scan(api_key):
         chars += len(title) + len(desc)
         for c in comments:
             chars += len(c.get("body") or "")
+            if c.get("user"):
+                actors.add(c["user"]["id"])
+        if it.get("creator"):
+            actors.add(it["creator"]["id"])
+        if it.get("assignee"):
+            actors.add(it["assignee"]["id"])
         if it.get("createdAt"):
             dates.append(it["createdAt"])
 
@@ -220,10 +228,62 @@ def run_scan(api_key):
         "text_tokens_estimate": round(chars / 4),
         "golden_tickets": n_golden,
     }
+    notes = []
+
+    # 1. Tickets d'onboarding Linear : gonflent le taux multi-outils.
     if n_default:
-        result["_note"] = (
-            f"{n_default} ticket(s) d'onboarding Linear par défaut : gonflent "
-            "pct_tickets_mentioning_tools. À exclure sur un vrai workspace.")
+        notes.append(
+            f"{n_default} ticket(s) d'onboarding Linear par defaut : gonflent "
+            "pct_tickets_mentioning_tools.")
+
+    # 2. Visibilite : une seule equipe visible peut signifier que la cle
+    #    n'accede pas aux equipes privees. Les chiffres sont un plancher.
+    if n_teams <= 1:
+        notes.append(
+            "Une seule equipe visible : verifier aupres du contact s'il "
+            "existe des equipes privees hors de portee de la cle.")
+
+    # 3. Trop peu d'acteurs : pas de collaboration a reconstruire.
+    if len(actors) <= 2:
+        notes.append(
+            f"{len(actors)} acteur(s) distinct(s) seulement : workspace quasi "
+            "solo, faible interet pour des taches multi-acteurs.")
+
+    # 4. Historique trop court pour des trajectoires realistes.
+    if months < 6:
+        notes.append(
+            f"Workspace actif depuis {round(months, 1)} mois : historique trop "
+            "court pour des trajectoires longues.")
+
+    # 5. Volume insuffisant pour amortir le cout de traitement.
+    if n < 50:
+        notes.append(
+            f"{n} tickets seulement : volume sous le seuil d'exploitation.")
+
+    # 6. Le signal le plus disqualifiant : du volume, mais rien d'exploitable.
+    if n >= 200 and n_golden == 0:
+        notes.append(
+            "Volume important mais aucun golden ticket : Linear utilise comme "
+            "liste de taches, pas comme surface de collaboration.")
+
+    # 7. La conversation a lieu ailleurs (Slack, reunions).
+    if n_with / n < 0.15:
+        notes.append(
+            f"{pct(n_with)} % de tickets commentes : les echanges se font "
+            "probablement hors de Linear.")
+
+    # 8. Import en masse : des tickets crees le meme jour viennent d'une
+    #    migration (Jira, Asana) et arrivent souvent sans historique.
+    if n >= 20 and dates:
+        by_day = Counter(d[:10] for d in dates)
+        day, cnt = by_day.most_common(1)[0]
+        if cnt / n > 0.5:
+            notes.append(
+                f"{round(100 * cnt / n)} % des tickets crees le {day} : import "
+                "en masse probable, historique de collaboration absent.")
+
+    if notes:
+        result["_note"] = " | ".join(notes)
     return result
 
 
