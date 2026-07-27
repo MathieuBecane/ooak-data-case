@@ -17,7 +17,7 @@ Les 8 métriques :
   1. Volume : équipes, projets, tickets, commentaires
   2. Workflow actif depuis (mois / années)
   3. % de tickets avec au moins un commentaire
-  4. Nombre médian de commentaires par ticket
+  4. Nombre médian de commentaires, sur les tickets commentés uniquement
   5. % de tickets résolus
   6. % de tickets mentionnant un autre outil
   7. Nombre de caractères de texte (titres, descriptions, commentaires)
@@ -197,6 +197,13 @@ def run_scan(api_key):
     months = (datetime.now(timezone.utc) - first_dt).days / 30.44
     pct = lambda x: round(100 * x / n, 1)
 
+    # Médiane calculée sur les seuls tickets qui portent au moins un
+    # commentaire. Sur l'ensemble des tickets elle vaut 0 dès qu'une majorité
+    # est muette, ce que pct_tickets_with_comments dit déjà. Ici on mesure la
+    # profondeur d'un fil quand il existe.
+    commented = [c for c in comment_counts if c > 0]
+    median_commented = statistics.median(commented) if commented else 0
+
     result = {
         "organization": {"name": org.get("name"),
                          "url_key": org.get("urlKey")},
@@ -206,7 +213,7 @@ def run_scan(api_key):
                             "months": round(months, 1),
                             "years": round(months / 12, 1)},
         "pct_tickets_with_comments": pct(n_with),
-        "median_comments_per_ticket": statistics.median(comment_counts),
+        "median_comments_per_ticket": median_commented,
         "pct_tickets_solved": pct(n_solved),
         "pct_tickets_mentioning_tools": pct(n_tool),
         "text_characters": chars,
@@ -237,7 +244,7 @@ def main():
           f"{v['tickets']} tickets, {v['comments']} commentaires")
     print(f"2. Actif depuis ...... {w['months']} mois ({w['years']} ans)")
     print(f"3. % avec commentaire  {r['pct_tickets_with_comments']} %")
-    print(f"4. Médiane comm./ticket {r['median_comments_per_ticket']}")
+    print(f"4. Médiane comm. (tickets commentés) {r['median_comments_per_ticket']}")
     print(f"5. % résolus ......... {r['pct_tickets_solved']} %")
     print(f"6. % mentionnant outil {r['pct_tickets_mentioning_tools']} %")
     print(f"7. Caractères ........ {r['text_characters']:,} "
