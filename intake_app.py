@@ -1,25 +1,25 @@
 #!/usr/bin/env python3
 """
-intake_app.py — Page d'intake sécurisée pour collecter une clé API Linear
-et lancer le scan, sans que la clé transite jamais par email.
+intake_app.py — Secure intake page that collects a Linear API key and runs
+the scan, so the key never travels by email.
 
-Lancer en local :
+Run locally:
     pip install -r requirements.txt
     python3 intake_app.py
-    # puis ouvrir http://localhost:5000/scan/demo-token
+    # then open http://localhost:5000/scan/demo-token
 
-En production (Render) :
+In production (Render):
     gunicorn intake_app:app --timeout 300 --workers 1
 
---- PROPRIÉTÉS DE SÉCURITÉ ---
-1. La clé n'arrive JAMAIS par email : le founder la saisit sur cette page,
-   en HTTPS (chiffré en transit).
-2. La clé n'est JAMAIS écrite sur disque ni dans les logs : elle vit en
-   mémoire le temps du scan, et n'est transmise à aucun tiers.
-3. Seul le résultat agrégé (les 8 métriques) quitte cette application.
-   Aucun contenu de ticket, aucune clé.
-4. La clé demandée est en lecture seule (scope Read) : même en cas de fuite,
-   elle ne peut rien modifier. Et le founder la révoque après le scan.
+--- SECURITY PROPERTIES ---
+1. The key NEVER arrives by email: the founder types it into this page,
+   over HTTPS, so it is encrypted in transit.
+2. The key is NEVER written to disk or to any log: it lives in memory for
+   the duration of the scan and is passed to no third party.
+3. Only the aggregated result leaves this application. No ticket content,
+   no key.
+4. The key is read-only (Read scope): even if leaked it cannot modify
+   anything, and the founder revokes it right after the scan.
 """
 
 import os
@@ -33,18 +33,18 @@ from linear_estimate import run_scan  # on réutilise EXACTEMENT le même scan
 
 app = Flask(__name__)
 
-# On coupe le log par défaut de Flask sur les requêtes, par prudence :
-# on ne veut prendre AUCUN risque de journaliser un corps de requête.
+# Silence Flask's default request logging, out of caution: we want zero
+# chance of a request body ending up in the logs.
 logging.getLogger("werkzeug").setLevel(logging.WARNING)
 
-# URL du webhook n8n qui écrit dans le Google Sheet.
-# Définie comme variable d'environnement sur Render — JAMAIS en dur ici.
+# URL of the n8n webhook that appends to the Google Sheet.
+# Set as an environment variable on Render — NEVER hard-coded here.
 N8N_WEBHOOK_URL = os.environ.get("N8N_WEBHOOK_URL", "").strip()
 
 # ---------------------------------------------------------------------------
-# JETONS PROSPECTS — une ligne par entreprise à qui tu envoies un lien.
-# Le lien à envoyer est :  https://<ton-app>.onrender.com/scan/<jeton>
-# Choisis des jetons longs et non devinables.
+# PROSPECT TOKENS — one line per company you send a link to.
+# The link to send is:  https://<your-app>.onrender.com/scan/<token>
+# Use long, unguessable tokens.
 # ---------------------------------------------------------------------------
 VALID_TOKENS = {
     "demo-token": "Démo",
@@ -111,10 +111,10 @@ donnée brute.</b></p>
 
 
 def flatten(result, company, token):
-    """Transforme le JSON imbriqué en 17 colonnes plates, dans l'ordre
-    exact des en-têtes du Google Sheet.
-    `company` est le nom réel de l'organisation Linear ; le libellé associé
-    au jeton ne sert que de repli si l'API ne le renvoie pas."""
+    """Flattens the nested result into 15 columns, in the exact order of the
+    Google Sheet headers.
+    The real Linear organisation name wins; the label attached to the token
+    is only a fallback when the API returns nothing."""
     v = result.get("volume", {})
     w = result.get("workflow_active", {})
     org_name = (result.get("organization") or {}).get("name")
@@ -138,19 +138,19 @@ def flatten(result, company, token):
 
 
 def push_to_sheet(row):
-    """Envoie la ligne aplatie au webhook n8n, qui l'écrit dans le Sheet.
-    Un échec ici n'invalide pas le scan : le founder voit quand même son
-    résultat, et la ligne peut être rejouée à la main."""
+    """Sends the flattened row to the n8n webhook, which writes it to the
+    Sheet. A failure here does not invalidate the scan: the founder still
+    gets their confirmation, and the row can be replayed by hand."""
     if not N8N_WEBHOOK_URL:
-        print("[warn] N8N_WEBHOOK_URL non définie — rien envoyé au Sheet.")
+        print("[warn] N8N_WEBHOOK_URL not set - nothing sent to the Sheet.")
         return False
     try:
         r = requests.post(N8N_WEBHOOK_URL, json=row, timeout=20)
         r.raise_for_status()
-        print(f"[ok] Ligne envoyée au Sheet pour {row['company']}.")
+        print(f"[ok] Row sent to the Sheet for {row['company']}.")
         return True
     except Exception as e:
-        print(f"[erreur] Envoi au Sheet échoué : {type(e).__name__}")
+        print(f"[error] Sending to the Sheet failed: {type(e).__name__}")
         return False
 
 
@@ -169,20 +169,20 @@ def scan(token):
         return render_template_string(PAGE, company=company,
                                       result=None, error=None)
 
-    # POST : la clé arrive ici, en mémoire uniquement.
+    # POST: the key arrives here, in memory only.
     api_key = request.form.get("api_key", "").strip()
     if not api_key:
         return render_template_string(PAGE, company=company,
                                       result=None, error="Clé manquante.")
     try:
-        result = run_scan(api_key)          # utilisation en mémoire
-    except Exception as e:                   # on n'expose pas la clé dans l'erreur
+        result = run_scan(api_key)          # used in memory
+    except Exception as e:                   # never surface the key in an error
         return render_template_string(PAGE, company=company, result=None,
                                       error=str(e)[:200])
     finally:
-        api_key = None                       # on jette la clé, explicitement
+        api_key = None                       # drop the key, explicitly
 
-    # Seuls les agrégats quittent l'application.
+    # Only the aggregates leave the application.
     row = flatten(result, company, token)
     push_to_sheet(row)
 
@@ -191,5 +191,5 @@ def scan(token):
 
 
 if __name__ == "__main__":
-    # En local seulement. En prod : gunicorn derrière HTTPS.
+    # Local only. In production: gunicorn behind HTTPS.
     app.run(host="127.0.0.1", port=5000, debug=False)
