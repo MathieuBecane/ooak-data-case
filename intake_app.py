@@ -100,7 +100,7 @@ discussion they carry.</p>
   </form>
   <p class="note">The key is sent encrypted (HTTPS) and used only for the
   duration of the scan. It is never written to disk, never logged, never sent
-  by email. Being read-only, it cannot modify anything &mdash; and you revoke it
+  by email. Being read-only, it cannot modify anything and you can revoke it
   in the same place once the scan is done.
   Please keep this tab open while the scan runs.</p>
 {% endif %}
