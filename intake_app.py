@@ -129,11 +129,9 @@ def flatten(result, company, token):
         "first_ticket": w.get("first_ticket"),
         "months_active": w.get("months"),
         "pct_with_comments": result.get("pct_tickets_with_comments"),
-        "median_comments": result.get("median_comments_per_ticket"),
         "pct_solved": result.get("pct_tickets_solved"),
         "pct_tools": result.get("pct_tickets_mentioning_tools"),
         "characters": result.get("text_characters"),
-        "tokens_est": result.get("text_tokens_estimate"),
         "golden_tickets": result.get("golden_tickets"),
         "note": result.get("_note", ""),
     }
