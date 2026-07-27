@@ -1,32 +1,32 @@
 #!/usr/bin/env python3
 """
-linear_estimate.py — Extrait 8 métriques d'un workspace Linear pour estimer
-la valeur d'un dataset.
+linear_estimate.py — Extracts volume and structure metrics from a Linear
+workspace in order to price a dataset.
 
-Deux usages :
-  1. En ligne de commande :
+Two ways to use it:
+  1. From the command line:
        LINEAR_API_KEY="lin_api_xxx" python3 linear_estimate.py
-  2. Comme module (import) :
+  2. As a module:
        from linear_estimate import run_scan
-       result = run_scan("lin_api_xxx")   # renvoie un dict
+       result = run_scan("lin_api_xxx")   # returns a dict
 
-La clé doit avoir le scope "Read" uniquement. Le script ne fait que lire.
-Aucun contenu texte n'est écrit sur disque : on lit, on compte, on jette.
+The key only needs the "Read" scope. The script never writes.
+No ticket text is ever written to disk: we read, we count, we discard.
 
-Les 8 métriques :
-  1. Volume : équipes, projets, tickets, commentaires
-  2. Workflow actif depuis (mois / années)
-  3. % de tickets avec au moins un commentaire
-  5. % de tickets résolus
-  6. % de tickets mentionnant un autre outil
-  7. Nombre de caractères de texte (titres, descriptions, commentaires)
-  8. Nombre absolu de golden tickets
+Metrics returned:
+  1. Volume: teams, projects, tickets, comments
+  2. How long the workspace has been active (months / years)
+  3. Share of tickets carrying at least one comment
+  4. Share of resolved tickets
+  5. Share of tickets referencing another tool
+  6. Total character count (titles, descriptions, comments)
+  7. Absolute number of golden tickets
 
-Golden ticket = les 4 conditions :
-  - description > 200 caractères
-  - >= 3 commentaires
-  - >= 2 participants distincts (créateur + assigné + auteurs de commentaires)
-  - dernier statut = résolu ET au moins 2 transitions de statut
+A golden ticket meets all four conditions:
+  - description longer than 200 characters
+  - at least 3 comments
+  - at least 2 distinct participants (creator + assignee + comment authors)
+  - resolved, and reached through at least 2 state transitions
 """
 
 import os
@@ -40,7 +40,7 @@ from datetime import datetime, timezone
 import requests
 
 API = "https://api.linear.app/graphql"
-PAGE = 25  # tickets par requête (limite la complexité GraphQL)
+PAGE = 25  # tickets per request, keeps the GraphQL complexity budget in check
 
 TOOL_DOMAINS = (
     "slack.com", "github.com", "gitlab.com", "notion.so", "figma.com",
@@ -50,6 +50,8 @@ TOOL_DOMAINS = (
 )
 URL_RE = re.compile(r"https?://[^\s)]+")
 
+# Tickets Linear creates automatically in a fresh workspace. They contain
+# links to other tools and would otherwise inflate the cross-tool metric.
 DEFAULT_ONBOARDING = {
     "Get familiar with Linear", "Connect your tools",
     "Import your data", "Set up your teams",
@@ -86,6 +88,7 @@ query($after: String, $n: Int!) {
 
 
 def _gql(headers, query, variables=None, tries=5):
+    """Single GraphQL call with retry on rate limiting."""
     for _ in range(tries):
         r = requests.post(API, headers=headers,
                           json={"query": query, "variables": variables or {}},
@@ -98,10 +101,12 @@ def _gql(headers, query, variables=None, tries=5):
         if "errors" in data:
             raise RuntimeError(str(data["errors"])[:400])
         return data["data"]
-    raise RuntimeError("Trop de tentatives (rate limit).")
+    raise RuntimeError("Too many retries (rate limited).")
 
 
 def _mentions_tool(issue):
+    """True when the ticket links out to another tool, through a native
+    Linear integration, an attachment URL, or a link in the text."""
     for a in issue.get("attachments", {}).get("nodes", []):
         src = (a.get("sourceType") or "").lower()
         if src and src not in ("file", "link"):
@@ -116,6 +121,8 @@ def _mentions_tool(issue):
 
 
 def _is_golden(issue):
+    """A ticket worth turning into an RL task: substantial, discussed by
+    several people, and carried through to resolution."""
     desc = issue.get("description") or ""
     comments = issue.get("comments", {}).get("nodes", [])
     if len(desc) <= 200:
@@ -140,8 +147,8 @@ def _is_golden(issue):
 
 
 def run_scan(api_key):
-    """Cœur réutilisable : prend une clé, renvoie le dict des 8 métriques.
-    La clé n'est utilisée qu'ici, en mémoire, et n'est jamais journalisée."""
+    """Reusable core: takes a key, returns the metrics dict.
+    The key is used here only, in memory, and is never logged."""
     headers = {"Authorization": api_key, "Content-Type": "application/json"}
 
     ctx = _gql(headers, Q_CONTEXT)
@@ -150,6 +157,7 @@ def run_scan(api_key):
     projects = ctx["projects"]["nodes"]
     n_projects = len(projects)
 
+    # Walk every page of issues until the cursor runs out.
     issues, after = [], None
     while True:
         conn = _gql(headers, Q_ISSUES, {"after": after, "n": PAGE})["issues"]
@@ -160,7 +168,7 @@ def run_scan(api_key):
 
     n = len(issues)
     if n == 0:
-        raise RuntimeError("Workspace vide ou clé sans accès.")
+        raise RuntimeError("Empty workspace, or key without access.")
 
     comment_counts, dates = [], []
     actors = set()
@@ -203,7 +211,6 @@ def run_scan(api_key):
     months = (datetime.now(timezone.utc) - first_dt).days / 30.44
     pct = lambda x: round(100 * x / n, 1)
 
-
     result = {
         "organization": {"name": org.get("name"),
                          "url_key": org.get("urlKey")},
@@ -218,66 +225,70 @@ def run_scan(api_key):
         "text_characters": chars,
         "golden_tickets": n_golden,
     }
+
+    # ---- Qualification flags -------------------------------------------
+    # Each rule is informational: it should start a conversation with the
+    # prospect, not silently discount the price.
     notes = []
 
-    # 1. Tickets d'onboarding Linear : gonflent le taux multi-outils.
+    # 1. Linear's own onboarding tickets inflate the cross-tool metric.
     if n_default:
         notes.append(
-            f"{n_default} ticket(s) d'onboarding Linear par defaut : gonflent "
+            f"{n_default} default Linear onboarding ticket(s): inflates "
             "pct_tickets_mentioning_tools.")
 
-    # 2. Visibilite : une seule equipe visible peut signifier que la cle
-    #    n'accede pas aux equipes privees. Les chiffres sont un plancher.
+    # 2. Visibility: a single visible team may mean the key cannot reach
+    #    private teams. Every figure is then a floor, not a total.
     if n_teams <= 1:
         notes.append(
-            "Une seule equipe visible : verifier aupres du contact s'il "
-            "existe des equipes privees hors de portee de la cle.")
+            "Only one team visible: check with the contact whether private "
+            "teams exist beyond the reach of this key.")
 
-    # 3. Trop peu d'acteurs : pas de collaboration a reconstruire.
+    # 3. Too few actors means there is no collaboration to reconstruct.
     if len(actors) <= 2:
         notes.append(
-            f"{len(actors)} acteur(s) distinct(s) seulement : workspace quasi "
-            "solo, faible interet pour des taches multi-acteurs.")
+            f"Only {len(actors)} distinct actor(s): near-solo workspace, "
+            "little value for multi-actor tasks.")
 
-    # 4. Historique trop court pour des trajectoires realistes.
+    # 4. History too short to yield realistic trajectories.
     if months < 6:
         notes.append(
-            f"Workspace actif depuis {round(months, 1)} mois : historique trop "
-            "court pour des trajectoires longues.")
+            f"Workspace active for {round(months, 1)} months only: history too "
+            "short for long trajectories.")
 
-    # 5. Volume insuffisant pour amortir le cout de traitement.
+    # 5. Volume below the point where processing pays for itself.
     if n < 50:
         notes.append(
-            f"{n} tickets seulement : volume sous le seuil d'exploitation.")
+            f"Only {n} tickets: volume below the exploitation threshold.")
 
-    # 6. Le signal le plus disqualifiant : du volume, mais rien d'exploitable.
+    # 6. The most disqualifying signal: volume, but nothing usable.
     if n >= 200 and n_golden == 0:
         notes.append(
-            "Volume important mais aucun golden ticket : Linear utilise comme "
-            "liste de taches, pas comme surface de collaboration.")
+            "High volume but no golden ticket: Linear used as a to-do list "
+            "rather than a collaboration surface.")
 
-    # 7. La conversation a lieu ailleurs (Slack, reunions).
+    # 7. The conversation happens elsewhere (Slack, meetings).
     if n_with / n < 0.15:
         notes.append(
-            f"{pct(n_with)} % de tickets commentes : les echanges se font "
-            "probablement hors de Linear.")
+            f"{pct(n_with)}% of tickets carry comments: discussion most likely "
+            "happens outside Linear.")
 
-    # 8. Seuil de resolution : sans tickets aboutis, aucune trajectoire
-    #    complete a rejouer, donc aucune tache RL derivable.
+    # 8. Resolution floor: without completed tickets there is no full
+    #    trajectory to replay, hence no derivable RL task.
     if n_solved / n < 0.10:
         notes.append(
-            f"{pct(n_solved)} % de tickets resolus, sous le seuil de 10 % : "
-            "trop peu de trajectoires abouties pour construire des taches.")
+            f"{pct(n_solved)}% of tickets resolved, below the 10% floor: too "
+            "few completed trajectories to build tasks from.")
 
-    # 8. Import en masse : des tickets crees le meme jour viennent d'une
-    #    migration (Jira, Asana) et arrivent souvent sans historique.
+    # 9. Bulk import: tickets created on the same day come from a migration
+    #    (Jira, Asana) and usually arrive stripped of their history.
     if n >= 20 and dates:
         by_day = Counter(d[:10] for d in dates)
         day, cnt = by_day.most_common(1)[0]
         if cnt / n > 0.5:
             notes.append(
-                f"{round(100 * cnt / n)} % des tickets crees le {day} : import "
-                "en masse probable, historique de collaboration absent.")
+                f"{round(100 * cnt / n)}% of tickets created on {day}: likely "
+                "bulk import, collaboration history missing.")
 
     if notes:
         result["_note"] = " | ".join(notes)
@@ -287,8 +298,8 @@ def run_scan(api_key):
 def main():
     key = os.environ.get("LINEAR_API_KEY")
     if not key:
-        sys.exit("Définis LINEAR_API_KEY dans l'environnement.")
-    print("Extraction en cours...")
+        sys.exit("Set LINEAR_API_KEY in the environment.")
+    print("Scanning...")
     r = run_scan(key)
     with open("linear_estimate.json", "w", encoding="utf-8") as f:
         json.dump(r, f, indent=2, ensure_ascii=False)
@@ -296,16 +307,18 @@ def main():
     v = r["volume"]
     w = r["workflow_active"]
     print("=" * 55)
-    print(f"0. Organisation ...... {r['organization']['name']}")
-    print(f"1. Volume ............ {v['teams']} équipes, {v['projects']} projets, "
-          f"{v['tickets']} tickets, {v['comments']} commentaires")
-    print(f"2. Actif depuis ...... {w['months']} mois ({w['years']} ans)")
-    print(f"3. % avec commentaire  {r['pct_tickets_with_comments']} %")
-    print(f"5. % résolus ......... {r['pct_tickets_solved']} %")
-    print(f"6. % mentionnant outil {r['pct_tickets_mentioning_tools']} %")
-    print(f"7. Caractères ........ {r['text_characters']:,}".replace(",", " "))
-    print(f"8. Golden tickets .... {r['golden_tickets']}")
-    print("\nJSON écrit dans linear_estimate.json")
+    print(f"0. Organisation ......... {r['organization']['name']}")
+    print(f"1. Volume ............... {v['teams']} teams, {v['projects']} projects, "
+          f"{v['tickets']} tickets, {v['comments']} comments")
+    print(f"2. Active for ........... {w['months']} months ({w['years']} years)")
+    print(f"3. % with a comment ..... {r['pct_tickets_with_comments']} %")
+    print(f"4. % resolved ........... {r['pct_tickets_solved']} %")
+    print(f"5. % referencing a tool . {r['pct_tickets_mentioning_tools']} %")
+    print(f"6. Characters ........... {r['text_characters']:,}".replace(",", " "))
+    print(f"7. Golden tickets ....... {r['golden_tickets']}")
+    if r.get("_note"):
+        print(f"\nFlags: {r['_note']}")
+    print("\nJSON written to linear_estimate.json")
 
 
 if __name__ == "__main__":
