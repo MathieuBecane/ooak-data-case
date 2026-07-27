@@ -54,7 +54,7 @@ VALID_TOKENS = {
 PAGE = """
 <!doctype html><html lang="fr"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Mesure de workspace — {{ company }}</title>
+<title>Workspace measurement — {{ company }}</title>
 <style>
  body{font-family:system-ui,sans-serif;max-width:560px;margin:3rem auto;
       padding:0 1rem;color:#1a1a1a;line-height:1.55}
@@ -68,43 +68,41 @@ PAGE = """
        padding-top:1rem} .ok{color:#137333} .err{color:#c00}
  a{color:#5e6ad2}
 </style></head><body>
-<h1>Connecter votre workspace Linear</h1>
-<p>Avant de vous faire une proposition chiffrée pour vos données
-opérationnelles, nous avons besoin d'en <b>mesurer le volume</b> : nombre de
-tickets, de commentaires, période couverte, densité des échanges.</p>
-<p><b>Nous ne lisons pas le contenu de vos tickets et ne conservons aucune
-donnée brute.</b></p>
+<h1>Connect your Linear workspace</h1>
+<p>Before we can price your operational data, we need to <b>measure the
+volume</b>: how many tickets and comments, over what period, and how much
+discussion they carry.</p>
+<p><b>We do not read the content of your tickets, and we keep no raw data.</b></p>
 
 {% if result %}
-  <p class="ok"><b>✓ Mesure terminée.</b> Merci.</p>
-  <p><b>Vous pouvez révoquer la clé dès maintenant</b> :
-  <a href="https://linear.app/settings/account/security" target="_blank">réglages
-  de sécurité Linear</a> → supprimez la clé <code>dataset-audit</code>.
-  Nous n'en avons plus besoin.</p>
-  <p>Nous analysons les mesures de notre côté et revenons vers vous sous 48 h
-  avec une proposition chiffrée, accompagnée du détail exact de ce que nous
-  avons mesuré.</p>
+  <p class="ok"><b>✓ Measurement complete.</b> Thank you.</p>
+  <p><b>You can revoke the key right now</b>:
+  <a href="https://linear.app/settings/account/security" target="_blank">Linear
+  security settings</a> → delete the key named <code>dataset-audit</code>.
+  We no longer need it.</p>
+  <p>We will review the measurements on our side and come back to you within
+  48 hours with a price, along with the full detail of what we measured.</p>
 {% elif error %}
-  <p class="err"><b>Erreur :</b> {{ error }}</p>
-  <p><a href="">Réessayer</a></p>
+  <p class="err"><b>Error:</b> {{ error }}</p>
+  <p><a href="">Try again</a></p>
 {% else %}
-  <div class="step"><b>1.</b> Ouvrez
-  <a href="https://linear.app/settings/account/security" target="_blank">
-  vos réglages de sécurité Linear</a>.</div>
-  <div class="step"><b>2.</b> « New API key » → nommez-la
-  <code>dataset-audit</code> → permissions : cochez
-  <b>uniquement <code>Read</code></b> → « All teams ».</div>
-  <div class="step"><b>3.</b> Collez la clé ici :</div>
+  <div class="step"><b>1.</b> Open your
+  <a href="https://linear.app/settings/account/security" target="_blank">Linear
+  security settings</a>.</div>
+  <div class="step"><b>2.</b> Click "New API key" → name it
+  <code>dataset-audit</code> → under permissions, tick
+  <b><code>Read</code> only</b> → "All teams".</div>
+  <div class="step"><b>3.</b> Paste the key here:</div>
   <form method="post" autocomplete="off">
     <input type="password" name="api_key" placeholder="lin_api_..."
            required autofocus>
-    <button type="submit">Lancer l'estimation</button>
+    <button type="submit">Run the measurement</button>
   </form>
-  <p class="note">La clé est transmise chiffrée (HTTPS) et utilisée uniquement
-  le temps du scan. Elle n'est jamais enregistrée sur disque, jamais
-  journalisée, jamais envoyée par email. En lecture seule, elle ne peut rien
-  modifier — et vous la révoquez au même endroit après le scan.
-  Merci de garder cet onglet ouvert pendant le scan.</p>
+  <p class="note">The key is sent encrypted (HTTPS) and used only for the
+  duration of the scan. It is never written to disk, never logged, never sent
+  by email. Being read-only, it cannot modify anything &mdash; and you revoke it
+  in the same place once the scan is done.
+  Please keep this tab open while the scan runs.</p>
 {% endif %}
 </body></html>
 """
@@ -173,7 +171,7 @@ def scan(token):
     api_key = request.form.get("api_key", "").strip()
     if not api_key:
         return render_template_string(PAGE, company=company,
-                                      result=None, error="Clé manquante.")
+                                      result=None, error="Missing key.")
     try:
         result = run_scan(api_key)          # used in memory
     except Exception as e:                   # never surface the key in an error
